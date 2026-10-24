@@ -1,95 +1,35 @@
 #!/usr/bin/env bash
-#
-# User-page installer for PasarGuard
-# Installs a custom subscription page template, with backups and restore.
-#
+# Publishes the Hiddify user page to GitHub Pages and prints the URL for the panel.
+# Usage: bash publish.sh USER/REPO [path/to/userpage-pgclock.html]
 set -euo pipefail
 
-# >>> Set this to the raw URL of YOUR index.html (or pass TEMPLATE_URL=... when running)
-TEMPLATE_URL="${TEMPLATE_URL:-https://raw.githubusercontent.com/YOUR_USER/YOUR_REPO/main/index.html}"
+REPO="${1:-}"; FILE="${2:-userpage-pgclock.html}"
+[[ "$REPO" == */* ]] || { echo "Usage: bash publish.sh USER/REPO [file.html]"; exit 1; }
+[[ -f "$FILE" ]]     || { echo "File not found: $FILE"; exit 1; }
+command -v git >/dev/null || { echo "Install git first."; exit 1; }
+command -v gh  >/dev/null || { echo "Install GitHub CLI (https://cli.github.com), then run: gh auth login"; exit 1; }
+gh auth status >/dev/null 2>&1 || { echo "Not logged in. Run: gh auth login"; exit 1; }
 
-readonly TARGET_DIR="/var/lib/pasarguard/templates/subscription"
-readonly TARGET_FILE="${TARGET_DIR}/index.html"
-readonly ENV_FILE="/opt/pasarguard/.env"
-readonly BACKUP_DIR="/var/lib/pasarguard/templates/.userpage-backups"
+SRC="$(cd "$(dirname "$FILE")" && pwd)/$(basename "$FILE")"
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
-if [[ -t 1 ]]; then G='\033[32m'; Y='\033[33m'; R='\033[31m'; B='\033[1m'; N='\033[0m'; else G=''; Y=''; R=''; B=''; N=''; fi
-ok()   { printf '%b\n' "${G}[OK]${N}  $*"; }
-info() { printf '%b\n' "[>>]  $*"; }
-warn() { printf '%b\n' "${Y}[!!]${N}  $*"; }
-fail() { printf '%b\n' "${R}[ERR]${N} $*" >&2; exit 1; }
+if gh repo view "$REPO" >/dev/null 2>&1; then
+  gh repo clone "$REPO" "$TMP/repo" -- -q
+else
+  gh repo create "$REPO" --public >/dev/null
+  git init -q -b main "$TMP/repo"
+  git -C "$TMP/repo" remote add origin "https://github.com/$REPO.git"
+fi
 
-ask() { # ask "prompt" var  (works even when run via curl | bash)
-  local v=""
-  if [[ -r /dev/tty ]]; then IFS= read -r -p "$1" v </dev/tty || true; else IFS= read -r -p "$1" v || true; fi
-  printf -v "$2" '%s' "$v"
-}
+cp "$SRC" "$TMP/repo/index.html"
+cd "$TMP/repo"
+git add index.html
+git -c user.name="userpage" -c user.email="userpage@users.noreply.github.com" commit -q -m "Update user page" || echo "No changes to commit"
+git branch -M main
+git push -q -u origin main
+gh api -X POST "repos/$REPO/pages" -f "source[branch]=main" -f "source[path]=/" >/dev/null 2>&1 || true
 
-require_root() { [[ "${EUID:-$(id -u)}" -eq 0 ]] || fail "Run as root (use sudo)."; }
-need() { command -v "$1" >/dev/null 2>&1 || fail "Missing command: $1 (apt install -y $1)"; }
-
-backup_current() {
-  mkdir -p "$BACKUP_DIR"
-  local ts; ts="$(date +%Y%m%d-%H%M%S)"
-  [[ -f "$TARGET_FILE" ]] && cp -a "$TARGET_FILE" "${BACKUP_DIR}/index.html.${ts}" && ok "Backed up current template"
-  [[ -f "$ENV_FILE" ]]    && cp -a "$ENV_FILE"    "${BACKUP_DIR}/env.${ts}"        && ok "Backed up .env"
-  return 0
-}
-
-download_and_check() {
-  [[ "$TEMPLATE_URL" != *YOUR_USER* ]] || fail "Set TEMPLATE_URL at the top of this script (or run: TEMPLATE_URL=https://... bash install.sh)"
-  [[ "$TEMPLATE_URL" =~ ^https://[^[:space:]]+$ ]] || fail "TEMPLATE_URL must be a full https:// URL."
-  local tmp; tmp="$(mktemp)"
-  info "Downloading template..."
-  curl -fsSL --retry 3 -H 'Cache-Control: no-cache' "$TEMPLATE_URL" -o "$tmp" || { rm -f "$tmp"; fail "Download failed."; }
-  [[ -s "$tmp" ]] || { rm -f "$tmp"; fail "Downloaded file is empty."; }
-  grep -qi '</html>' "$tmp" || { rm -f "$tmp"; fail "File does not look like a complete HTML page."; }
-  # PasarGuard renders templates with Jinja2: these delimiters would break or be executed.
-  if grep -qE '\{\{|\{%|\{#' "$tmp"; then
-    rm -f "$tmp"; fail "Template contains Jinja delimiters ({{ {% {#). Remove or escape them first."
-  fi
-  mkdir -p "$TARGET_DIR"
-  install -m 644 "$tmp" "$TARGET_FILE"
-  rm -f "$tmp"
-  ok "Template installed: $TARGET_FILE"
-}
-
-set_env() { # set_env KEY VALUE  (edits in place, keeps file owner/mode)
-  if grep -q "^$1=" "$ENV_FILE"; then sed -i "s|^$1=.*|$1=$2|" "$ENV_FILE"; else printf '\n%s=%s\n' "$1" "$2" >> "$ENV_FILE"; fi
-}
-
-configure_env() {
-  [[ -f "$ENV_FILE" ]] || { warn "$ENV_FILE not found, creating it."; mkdir -p "$(dirname "$ENV_FILE")"; : > "$ENV_FILE"; chmod 600 "$ENV_FILE"; }
-  set_env CUSTOM_TEMPLATES_DIRECTORY '"/var/lib/pasarguard/templates/"'
-  set_env SUBSCRIPTION_PAGE_TEMPLATE '"subscription/index.html"'
-  ok ".env updated"
-}
-
-restart_panel() {
-  local a; ask "Restart PasarGuard now? [Y/n]: " a
-  case "${a:-y}" in
-    [Yy]*) command -v pasarguard >/dev/null 2>&1 && pasarguard restart && ok "Restarted" || warn "Restart manually: pasarguard restart" ;;
-    *) info "Skipped. Run later: pasarguard restart" ;;
-  esac
-}
-
-restore_previous() {
-  local last; last="$(ls -1t "$BACKUP_DIR"/index.html.* 2>/dev/null | head -n1 || true)"
-  [[ -n "$last" ]] || fail "No backup found in $BACKUP_DIR"
-  cp -a "$last" "$TARGET_FILE"
-  ok "Restored: $last"
-  restart_panel
-}
-
-main() {
-  printf '%b\n' "\n${B}PasarGuard user-page installer${N}\n"
-  require_root; need curl; need grep; need sed
-  printf '  1) Install / update page\n  2) Restore previous page\n  0) Exit\n\n'
-  local c; ask "Choice [0-2]: " c
-  case "$c" in
-    1) backup_current; download_and_check; configure_env; restart_panel; ok "Done." ;;
-    2) restore_previous ;;
-    *) info "Cancelled." ;;
-  esac
-}
-main "$@"
+echo
+echo "Done. In the Hiddify panel go to Settings > Customizing User Page > User page URL and paste:"
+echo "  https://${REPO%%/*}.github.io/${REPO##*/}/"
+echo "(GitHub Pages can take about a minute to go live.)"
