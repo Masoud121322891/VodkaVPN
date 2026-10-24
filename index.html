@@ -107,55 +107,66 @@ header{display:flex;align-items:center;gap:14px;padding:6px 4px 6px}
 <script>
 /* ============ تنظیمات ============ */
 const CONFIG = {
-  // اگر این صفحه از دامنهٔ خود پنل نمایش داده می‌شود، همین خالی بماند.
-  apiBase: "",
-  // مسیر API کاربر؛ {base} = آدرس صفحهٔ کاربر (proxy_path/uuid). در صورت نیاز با پنل خودتان تطبیق دهید.
-  mePath: "{base}/api/v2/user/me/",
-  usagePath: "{base}/api/v2/user/usage/",   // اختیاری؛ اگر نبود، نمودار نمایشی می‌شود
-  demo: false                               // true = نمایش داده‌ی تستی
+  // مسیرهای احتمالی اطلاعات کاربر؛ اولی که جواب بدهد استفاده می‌شود. {base} = آدرس همین صفحه (توکن اشتراک)
+  infoPaths: ["{base}/info", "{base}/api/v2/user/me/"],
+  usagePath: "{base}/usage",
+  demo: false
 };
-
-/* ============ ابزارها ============ */
+const GB = 1073741824;
 const $ = id => document.getElementById(id);
 const fa = n => String(n).replace(/\d/g, d => "۰۱۲۳۴۵۶۷۸۹"[d]);
-const gb = n => fa((Math.round(n * 10) / 10).toString().replace(".", "٫")) + " گیگابایت";
+const gb = n => fa((Math.round(n * 100) / 100).toString().replace(".", "٫")) + " گیگابایت";
 const jdate = d => new Intl.DateTimeFormat("fa-IR-u-ca-persian", {day:"numeric", month:"long", year:"numeric"}).format(d);
+const base = location.pathname.replace(/\/(index\.html)?$/, "");
+const tried = [];
 
-function baseFromLocation(){
-  const p = location.pathname.replace(/\/(index\.html)?$/, "");
-  return p;
+async function getJSON(path){
+  const url = path.replace("{base}", base);
+  try{
+    const r = await fetch(url, {headers:{Accept:"application/json"}});
+    tried.push(url + " → " + r.status);
+    if (!r.ok) return null;
+    const t = await r.text();
+    try { return JSON.parse(t); } catch { tried.push(url + " → not JSON"); return null; }
+  }catch(e){ tried.push(url + " → " + e.message); return null; }
 }
 
-/* نگاشت انعطاف‌پذیر فیلدها؛ اگر نام فیلدهای پنل شما فرق دارد اینجا اضافه کنید */
+function toDate(e){
+  if (e === null || e === undefined || e === 0 || e === "0") return null;
+  const d = typeof e === "number" ? new Date(e > 1e12 ? e : e * 1000) : new Date(e);
+  return isNaN(d) || d.getFullYear() > 2100 || d.getFullYear() < 2000 ? null : d;
+}
+const STATUS = {active:["فعال",1], disabled:["غیرفعال",0], limited:["حجم تمام شده",0], expired:["منقضی",0], on_hold:["در انتظار اتصال",1]};
+
 function normalize(j){
+  if (j.user && typeof j.user === "object") j = j.user;
   const pick = (...k) => { for (const x of k) if (j[x] !== undefined && j[x] !== null) return j[x]; };
-  const total = pick("usage_limit_GB","usage_limit","total_gb","data_limit_gb");
-  const used  = pick("current_usage_GB","current_usage","used_gb","usage_gb");
-  const exp   = pick("expiry_time","expire","expiry","expire_date","package_end");
-  const last  = pick("last_online","last_connection","last_seen","online_at");
+  let used, total;
+  if (j.used_traffic !== undefined){ used = j.used_traffic / GB; total = (j.data_limit || 0) / GB; }
+  else { used = +pick("current_usage_GB","current_usage") || 0; total = +pick("usage_limit_GB","usage_limit") || 0; }
+  const st = STATUS[j.status] || (j.is_active === false ? ["غیرفعال",0] : ["فعال",1]);
   return {
-    name: pick("name","username","profile_title") || "کاربر",
-    active: pick("is_active","active","enable") !== false,
-    total: +total || 0, used: +used || 0,
-    exp: exp ? new Date(exp) : null,
-    last: last ? new Date(last) : null,
-    sub: pick("subscription_url","sub_url","profile_url") || location.href
+    name: pick("username","name","profile_title") || "کاربر",
+    statusText: st[0], active: !!st[1],
+    total, used,
+    exp: toDate(pick("expire","expiry_time","expire_date")),
+    last: toDate(pick("online_at","last_online","sub_updated_at")),
+    sub: location.origin + base
   };
 }
 
 function render(u){
   $("name").textContent = u.name;
   $("av").textContent = [...u.name][0].toUpperCase();
-  const b = $("badge"); b.textContent = u.active ? "فعال" : "غیرفعال"; b.classList.toggle("off", !u.active);
+  const b = $("badge"); b.textContent = u.statusText; b.classList.toggle("off", !u.active);
   $("used").textContent = gb(u.used);
   $("total").textContent = u.total ? gb(u.total) : "نامحدود";
-  const left = u.total ? Math.max(u.total - u.used, 0) : null;
-  $("left").textContent = left === null ? "نامحدود" : gb(left);
+  $("left").textContent = u.total ? gb(Math.max(u.total - u.used, 0)) : "نامحدود";
   const pct = u.total ? Math.min(u.used / u.total, 1) : 0;
   $("pct").textContent = u.total ? fa(Math.round(pct * 100)) + "٪ مصرف شده" : "";
   requestAnimationFrame(() => $("arc").style.strokeDashoffset = 263.9 * (1 - pct));
-  $("exp").textContent = u.exp && !isNaN(u.exp) && u.exp.getFullYear() < 2100 ? jdate(u.exp) : "نامحدود";
-  $("last").textContent = u.last && !isNaN(u.last) ? jdate(u.last) : "—";
+  $("exp").textContent = u.exp ? jdate(u.exp) : "نامحدود";
+  $("last").textContent = u.last ? jdate(u.last) : "—";
   $("sublink").href = u.sub;
   $("copy").onclick = async () => {
     try { await navigator.clipboard.writeText(u.sub); $("copy").textContent = "کپی شد"; }
@@ -164,45 +175,72 @@ function render(u){
   };
 }
 
-/* نمودار: آرایه‌ای از {label, gb} */
 function drawBars(points){
+  if (!points){ $("bars").innerHTML = '<p class="msg" style="margin:auto">داده‌ای برای نمودار دریافت نشد</p>'; return; }
   const max = Math.max(...points.map(p => p.gb), 0.001);
   const mi = points.findIndex(p => p.gb === max);
   $("bars").innerHTML = points.map((p, i) =>
     `<div class="col${i === mi ? " max" : ""}"><em>${fa(Math.round(p.gb * 100) / 100)}</em>
-     <div class="track"><div class="fill" style="height:${Math.max(p.gb / max * 100, 4)}%"></div></div>
-     <span>${fa(p.label)}</span></div>`).join("");
+     <div class="track"><div class="fill" style="height:${Math.max(p.gb / max * 100, 3)}%"></div></div>
+     <span>${p.label}</span></div>`).join("");
 }
-const demoSeries = r => r === "day"
-  ? [17,20,23,2,5,8,11,14].map((h, i) => ({label: h, gb: [.39,.07,.14,.08,1.4,.03,.34,.3][i]}))
-  : ["ش","ی","د","س","چ","پ","ج"].map((d, i) => ({label: d, gb: [2.1,3.4,1.2,4.8,2.7,3.9,1.6][i]}));
 
-let usageData = null;
-function chart(r){
-  document.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-pressed", b.dataset.r === r));
-  drawBars(usageData && usageData[r] ? usageData[r] : demoSeries(r));
+/* از هر ساختاری که پنل بدهد، ردیف‌های {زمان، حجم} را پیدا می‌کند */
+function collect(o, out){
+  if (Array.isArray(o)) return o.forEach(x => collect(x, out));
+  if (o && typeof o === "object"){
+    const t = o.period_start || o.time || o.date || o.timestamp;
+    const v = o.total_traffic ?? o.used_traffic ?? o.value ?? o.traffic;
+    if (t !== undefined && typeof v === "number") out.push({t: typeof t === "number" ? new Date(t > 1e12 ? t : t * 1000) : new Date(t), v});
+    else Object.values(o).forEach(x => collect(x, out));
+  }
+  return out;
 }
+async function loadSeries(r){
+  const now = new Date(), day = r === "day";
+  const start = new Date(now - (day ? 24 : 168) * 3600e3);
+  const j = await getJSON(CONFIG.usagePath + `?period=${day ? "hour" : "day"}&start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(now.toISOString())}`);
+  if (!j) return null;
+  const rows = collect(j, []);
+  if (!rows.length) return null;
+  const n = day ? 8 : 7, step = (day ? 3 : 24) * 3600e3;
+  const bk = Array.from({length: n}, (_, i) => {
+    const s = new Date(now - (n - i) * step);
+    return {s, gb: 0};
+  });
+  rows.forEach(x => {
+    const i = Math.floor((x.t - bk[0].s) / step);
+    if (i >= 0 && i < n) bk[i].gb += x.v / GB;
+  });
+  return bk.map(b => ({
+    gb: b.gb,
+    label: day ? fa(b.s.getHours()) : new Intl.DateTimeFormat("fa-IR", {weekday:"short"}).format(b.s)
+  }));
+}
+
+const cache = {};
+async function chart(r){
+  document.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-pressed", b.dataset.r === r));
+  if (!(r in cache)) cache[r] = CONFIG.demo ? demo(r) : await loadSeries(r);
+  drawBars(cache[r]);
+}
+const demo = r => r === "day"
+  ? [17,20,23,2,5,8,11,14].map((h,i) => ({label: fa(h), gb: [.39,.07,.14,.08,1.4,.03,.34,.3][i]}))
+  : ["ش","ی","د","س","چ","پ","ج"].map((d,i) => ({label: d, gb: [2.1,3.4,1.2,4.8,2.7,3.9,1.6][i]}));
 document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => chart(b.dataset.r));
 
-/* ============ اجرا ============ */
 async function load(){
   if (CONFIG.demo){
-    render({name:"MrClock", active:true, total:1000, used:21.5, exp:null, last:new Date(), sub:location.href});
-    chart("day"); $("msg").textContent = "حالت نمایشی"; return;
+    render({name:"MrClock", statusText:"فعال", active:true, total:1000, used:21.5, exp:null, last:new Date(), sub:location.href});
+    return chart("day");
   }
-  const base = baseFromLocation();
-  try{
-    const r = await fetch(CONFIG.apiBase + CONFIG.mePath.replace("{base}", base), {headers:{Accept:"application/json"}});
-    if (!r.ok) throw new Error(r.status);
-    render(normalize(await r.json()));
-  }catch(e){
-    $("msg").textContent = "دریافت اطلاعات حساب ممکن نشد. آدرس API را در تنظیمات فایل بررسی کنید.";
-    render({name:"—", active:false, total:0, used:0, exp:null, last:null, sub:location.href});
+  let j = null;
+  for (const p of CONFIG.infoPaths){ j = await getJSON(p); if (j) break; }
+  if (j) render(normalize(j));
+  else {
+    render({name:"—", statusText:"نامشخص", active:false, total:0, used:0, exp:null, last:null, sub:location.origin + base});
+    $("msg").textContent = "اطلاعات دریافت نشد: " + tried.join(" | ");
   }
-  try{
-    const r = await fetch(CONFIG.apiBase + CONFIG.usagePath.replace("{base}", base));
-    if (r.ok) usageData = await r.json();
-  }catch(e){}
   chart("day");
 }
 load();
