@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PGClock</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🕓</text></svg>">
+<style>
+:root{
+  --bg:#0a0b1f; --bg2:#14163a; --glass:rgba(255,255,255,.055); --line:rgba(150,170,255,.16);
+  --text:#eef0ff; --muted:#8e94c4; --accent:#4f8dff; --accent2:#7a5cff; --ok:#4ee0a0; --bad:#ff6b7a;
+  --font:"Vazirmatn","Vazir","Segoe UI",Tahoma,system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0}
+html,body{min-height:100%}
+body{
+  font-family:var(--font);color:var(--text);
+  background:radial-gradient(900px 500px at 80% -10%,#2a2470 0%,transparent 60%),
+             radial-gradient(700px 500px at 0% 110%,#1b2f78 0%,transparent 60%),var(--bg);
+  background-attachment:fixed;
+  padding:max(18px,env(safe-area-inset-top)) 16px max(24px,env(safe-area-inset-bottom));
+}
+.wrap{max-width:480px;margin:0 auto;display:grid;gap:12px}
+.glass{background:var(--glass);border:1px solid var(--line);border-radius:22px;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+header{display:flex;align-items:center;gap:14px;padding:6px 4px 6px}
+.avatar{width:54px;height:54px;border-radius:50%;display:grid;place-items:center;font-size:22px;font-weight:700;
+  background:linear-gradient(145deg,rgba(255,255,255,.14),rgba(255,255,255,.04));border:1px solid var(--line)}
+.who small{color:var(--muted);font-size:12px;display:block}
+.who b{font-size:26px;letter-spacing:.3px;font-weight:700}
+.badge{margin-inline-start:auto;font-size:12px;padding:5px 12px;border-radius:99px;
+  background:rgba(78,224,160,.12);color:var(--ok);border:1px solid rgba(78,224,160,.25)}
+.badge.off{background:rgba(255,107,122,.12);color:var(--bad);border-color:rgba(255,107,122,.3)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stat{padding:14px 16px;min-height:76px}
+.stat small{display:block;color:var(--muted);font-size:12px;margin-bottom:8px}
+.stat b{font-size:17px;font-weight:600}
+.ring{padding:16px 18px;display:flex;align-items:center;gap:18px}
+.ring svg{flex:none;width:92px;height:92px;transform:rotate(-90deg)}
+.ring .t{stroke:rgba(255,255,255,.08)}
+.ring .p{stroke:url(#g);stroke-linecap:round;transition:stroke-dashoffset .9s cubic-bezier(.2,.8,.2,1)}
+.ring div small{color:var(--muted);font-size:12px}
+.ring div b{display:block;font-size:22px;margin:2px 0}
+.chart{padding:16px}
+.chart h2{font-size:16px;font-weight:600;margin-bottom:12px}
+.tabs{display:flex;gap:8px;margin-bottom:14px}
+.tabs button{flex:1;font:inherit;font-size:14px;color:var(--muted);background:var(--glass);border:1px solid var(--line);
+  border-radius:14px;padding:10px;cursor:pointer}
+.tabs button[aria-pressed=true]{color:#fff;background:linear-gradient(135deg,#1f4f9c,#2f5fd0);border-color:transparent}
+.tabs button:focus-visible,.link:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.bars{display:flex;gap:6px;align-items:stretch;height:200px;direction:ltr}
+.col{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0}
+.track{flex:1;width:100%;border-radius:12px;background:rgba(255,255,255,.05);border:1px solid var(--line);
+  display:flex;align-items:flex-end;overflow:hidden}
+.fill{width:100%;border-radius:12px;background:linear-gradient(180deg,#5aa0ff,#3b6fe0);min-height:8px;transition:height .7s ease}
+.col.max .fill{background:linear-gradient(180deg,#8ab6ff,#4f8dff);box-shadow:0 0 18px rgba(79,141,255,.55)}
+.col span{font-size:11px;color:var(--muted)}
+.col em{font-style:normal;font-size:10px;color:var(--muted)}
+.sub{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px}
+.link{flex:1;min-width:130px;text-align:center;text-decoration:none;color:var(--text);font-size:14px;padding:12px;border-radius:14px;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));border:0;cursor:pointer;font-family:inherit}
+.link.alt{background:var(--glass);border:1px solid var(--line)}
+.msg{text-align:center;color:var(--muted);font-size:13px;padding:8px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+
+  <header>
+    <div class="avatar" id="av">?</div>
+    <div class="who"><small>حساب کاربری</small><b id="name">…</b></div>
+    <span class="badge" id="badge">…</span>
+  </header>
+
+  <section class="glass ring">
+    <svg viewBox="0 0 100 100" aria-hidden="true">
+      <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4f8dff"/><stop offset="1" stop-color="#7a5cff"/></linearGradient></defs>
+      <circle class="t" cx="50" cy="50" r="42" fill="none" stroke-width="9"/>
+      <circle class="p" id="arc" cx="50" cy="50" r="42" fill="none" stroke-width="9" stroke-dasharray="263.9" stroke-dashoffset="263.9"/>
+    </svg>
+    <div><small>باقی‌مانده</small><b id="left">—</b><small id="pct"></small></div>
+  </section>
+
+  <section class="grid">
+    <div class="glass stat"><small>انقضا</small><b id="exp">—</b></div>
+    <div class="glass stat"><small>آخرین اتصال</small><b id="last">—</b></div>
+    <div class="glass stat"><small>مصرف کل</small><b id="used">—</b></div>
+    <div class="glass stat"><small>حجم کل</small><b id="total">—</b></div>
+  </section>
+
+  <section class="glass chart" id="chartBox">
+    <h2>نمودار مصرف</h2>
+    <div class="tabs">
+      <button data-r="day" aria-pressed="true">۱ روز</button>
+      <button data-r="week" aria-pressed="false">۱ هفته</button>
+    </div>
+    <div class="bars" id="bars"></div>
+    <div class="sub">
+      <button class="link" id="copy">کپی لینک اشتراک</button>
+      <a class="link alt" id="sublink" href="#">باز کردن اشتراک</a>
+    </div>
+  </section>
+
+  <p class="msg" id="msg"></p>
+</div>
+
+<script>
+/* ============ تنظیمات ============ */
+const CONFIG = {
+  // اگر این صفحه از دامنهٔ خود پنل نمایش داده می‌شود، همین خالی بماند.
+  apiBase: "",
+  // مسیر API کاربر؛ {base} = آدرس صفحهٔ کاربر (proxy_path/uuid). در صورت نیاز با پنل خودتان تطبیق دهید.
+  mePath: "{base}/api/v2/user/me/",
+  usagePath: "{base}/api/v2/user/usage/",   // اختیاری؛ اگر نبود، نمودار نمایشی می‌شود
+  demo: false                               // true = نمایش داده‌ی تستی
+};
+
+/* ============ ابزارها ============ */
+const $ = id => document.getElementById(id);
+const fa = n => String(n).replace(/\d/g, d => "۰۱۲۳۴۵۶۷۸۹"[d]);
+const gb = n => fa((Math.round(n * 10) / 10).toString().replace(".", "٫")) + " گیگابایت";
+const jdate = d => new Intl.DateTimeFormat("fa-IR-u-ca-persian", {day:"numeric", month:"long", year:"numeric"}).format(d);
+
+function baseFromLocation(){
+  const p = location.pathname.replace(/\/(index\.html)?$/, "");
+  return p;
+}
+
+/* نگاشت انعطاف‌پذیر فیلدها؛ اگر نام فیلدهای پنل شما فرق دارد اینجا اضافه کنید */
+function normalize(j){
+  const pick = (...k) => { for (const x of k) if (j[x] !== undefined && j[x] !== null) return j[x]; };
+  const total = pick("usage_limit_GB","usage_limit","total_gb","data_limit_gb");
+  const used  = pick("current_usage_GB","current_usage","used_gb","usage_gb");
+  const exp   = pick("expiry_time","expire","expiry","expire_date","package_end");
+  const last  = pick("last_online","last_connection","last_seen","online_at");
+  return {
+    name: pick("name","username","profile_title") || "کاربر",
+    active: pick("is_active","active","enable") !== false,
+    total: +total || 0, used: +used || 0,
+    exp: exp ? new Date(exp) : null,
+    last: last ? new Date(last) : null,
+    sub: pick("subscription_url","sub_url","profile_url") || location.href
+  };
+}
+
+function render(u){
+  $("name").textContent = u.name;
+  $("av").textContent = [...u.name][0].toUpperCase();
+  const b = $("badge"); b.textContent = u.active ? "فعال" : "غیرفعال"; b.classList.toggle("off", !u.active);
+  $("used").textContent = gb(u.used);
+  $("total").textContent = u.total ? gb(u.total) : "نامحدود";
+  const left = u.total ? Math.max(u.total - u.used, 0) : null;
+  $("left").textContent = left === null ? "نامحدود" : gb(left);
+  const pct = u.total ? Math.min(u.used / u.total, 1) : 0;
+  $("pct").textContent = u.total ? fa(Math.round(pct * 100)) + "٪ مصرف شده" : "";
+  requestAnimationFrame(() => $("arc").style.strokeDashoffset = 263.9 * (1 - pct));
+  $("exp").textContent = u.exp && !isNaN(u.exp) && u.exp.getFullYear() < 2100 ? jdate(u.exp) : "نامحدود";
+  $("last").textContent = u.last && !isNaN(u.last) ? jdate(u.last) : "—";
+  $("sublink").href = u.sub;
+  $("copy").onclick = async () => {
+    try { await navigator.clipboard.writeText(u.sub); $("copy").textContent = "کپی شد"; }
+    catch { $("copy").textContent = "کپی نشد"; }
+    setTimeout(() => $("copy").textContent = "کپی لینک اشتراک", 1800);
+  };
+}
+
+/* نمودار: آرایه‌ای از {label, gb} */
+function drawBars(points){
+  const max = Math.max(...points.map(p => p.gb), 0.001);
+  const mi = points.findIndex(p => p.gb === max);
+  $("bars").innerHTML = points.map((p, i) =>
+    `<div class="col${i === mi ? " max" : ""}"><em>${fa(Math.round(p.gb * 100) / 100)}</em>
+     <div class="track"><div class="fill" style="height:${Math.max(p.gb / max * 100, 4)}%"></div></div>
+     <span>${fa(p.label)}</span></div>`).join("");
+}
+const demoSeries = r => r === "day"
+  ? [17,20,23,2,5,8,11,14].map((h, i) => ({label: h, gb: [.39,.07,.14,.08,1.4,.03,.34,.3][i]}))
+  : ["ش","ی","د","س","چ","پ","ج"].map((d, i) => ({label: d, gb: [2.1,3.4,1.2,4.8,2.7,3.9,1.6][i]}));
+
+let usageData = null;
+function chart(r){
+  document.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-pressed", b.dataset.r === r));
+  drawBars(usageData && usageData[r] ? usageData[r] : demoSeries(r));
+}
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => chart(b.dataset.r));
+
+/* ============ اجرا ============ */
+async function load(){
+  if (CONFIG.demo){
+    render({name:"MrClock", active:true, total:1000, used:21.5, exp:null, last:new Date(), sub:location.href});
+    chart("day"); $("msg").textContent = "حالت نمایشی"; return;
+  }
+  const base = baseFromLocation();
+  try{
+    const r = await fetch(CONFIG.apiBase + CONFIG.mePath.replace("{base}", base), {headers:{Accept:"application/json"}});
+    if (!r.ok) throw new Error(r.status);
+    render(normalize(await r.json()));
+  }catch(e){
+    $("msg").textContent = "دریافت اطلاعات حساب ممکن نشد. آدرس API را در تنظیمات فایل بررسی کنید.";
+    render({name:"—", active:false, total:0, used:0, exp:null, last:null, sub:location.href});
+  }
+  try{
+    const r = await fetch(CONFIG.apiBase + CONFIG.usagePath.replace("{base}", base));
+    if (r.ok) usageData = await r.json();
+  }catch(e){}
+  chart("day");
+}
+load();
+</script>
+</body>
+</html>
